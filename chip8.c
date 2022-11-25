@@ -30,7 +30,7 @@ uint8_t SUBN(uint8_t,uint8_t);
 uint8_t SHR(uint8_t, uint8_t);
 uint8_t SHL(uint8_t, uint8_t);
 uint8_t RND();
-void DRW(uint8_t,uint8_t);
+void DRW(uint8_t,uint8_t,uint8_t);
 void SKP(uint8_t);
 void SKNP(uint8_t);
 // end
@@ -107,7 +107,6 @@ uint8_t display[0x800] = {0};
 // Current operation
 uint16_t OP;
 
-uint8_t draw_flag = 0;
 
 // helper functions
 uint8_t select_4_bit(uint16_t opcode, uint8_t index){
@@ -173,7 +172,9 @@ void opcode_0x7(){
 	PC += 2;
 }
 
-void opcode_0x8(){}
+void opcode_0x8(){
+
+}
 
 void opcode_0x9(){
 	uint8_t x = select_4_bit(OP, 2);
@@ -197,26 +198,74 @@ void opcode_0xC(){
 	PC += 2;
 }
 void opcode_0xD(){
-	//TODO
+	uint8_t x = select_4_bit(OP, 2);
+	uint8_t y = select_4_bit(OP, 3);
+	uint8_t n = select_4_bit(OP, 4);
+    DRW(x,y,n);
+    PC += 2;
 }
 
 void opcode_0xE(){
-	switch (OP & 0xFF)
+	x = select_4_bit(OP, 2);
+    switch (OP & 0xFF)
 	{
 	case 0x9E:
-		//TODO
+		SKP(x);
 		break;
-	case 0xA1:
-		//TODO
+	case 0xA1:	
+		SKNP(x);
 		break;
 	default:
+        exit(1);
 		break;
 	}
 }
 void opcode_0xF(){
-
+    x = select_4_bit(OP, 2); 
+    switch (OP & 0xFF)
+	{
+    case 0x07:
+        V[x] = dt;
+        break;
+    case 0x0A:
+        for(uint8_t i = 0; i < 16; i++) {
+            if(keypad[i]) {
+                V[x]  = i;
+                break;
+            }
+        }
+        break;
+    case 0x15:
+        dt = V[x];
+        break;
+    case 0x18:
+        st = V[x];
+        break;
+    case 0x1E:
+        I += V[x];
+        break;
+    case 0x29:
+        I = V[x]*5;
+        break;
+    case 0x33:
+        uint8_t number = V[x];
+        for(uint8_t i = 2; i >= 0 ; i--){
+            memory[I + i] = number % 10;
+            number /= 10;
+        } 
+        break;
+    case 0x55:
+        for(uint8_t i = 0; i <= x; i++){
+            memory[I + i] = V[i];
+        }
+        break;
+    case 0x65:
+        for(uint8_t i = 0; i <= x; i++){
+            V[i] = memory[I + i];
+        }
+        break;
+    }
 }
-
 int main(){
 	uint16_t a = 0xABCD;
 	uint8_t b = select_4_bit(a, 2);
@@ -228,6 +277,7 @@ int main(){
 
 void CLS(){
 	memset(display, 0, sizeof(display));
+
 }
 
 void RET(){
@@ -288,6 +338,26 @@ uint8_t SHL(uint8_t a, uint8_t _){
 uint8_t RND(){
 	return (uint8_t)(rand()/256);
 }
-void DRW(uint8_t,uint8_t);
-void SKP(uint8_t);
-void SKNP(uint8_t);
+void DRW(uint8_t x, uint8_t y, uint8_t n){ 
+	// Set collision to 0
+	V[0xF] = 0;
+	
+	uint8_t px = 0;
+	for(uint8_t row = 0; row < n; row++){
+		px = memory[I + row];
+		for(uint8_t column = 0; column < 8; column++){
+			// check if bit == 1 do some operation 
+			// else goto next iteration.
+			if(px & (0x80 >> column) != 0){
+				if(display[V[x] + column + ((V[y] + row) * 64)] == 1) V[0xF] = 1;
+			    display[V[x] + column + ((V[y] + row) * 64)] ^= 1;
+			}
+		} 
+	}
+}
+void SKP(uint8_t x){
+    if(keypad[V[x]]) PC += 2;
+}
+void SKNP(uint8_t x){
+    if(!keypad[V[x]]) PC += 2;
+}
