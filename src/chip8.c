@@ -5,11 +5,11 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <stdint.h>
-
+#include <errno.h>
 
 #define log(fmt, ...)   if (DEBUG) fprintf(stderr, fmt, __VA_ARGS__)
 
-typedef void (*arithmetic_op)(uint8_t,uint8_t);
+typedef uint8_t (*arithmetic_op)(uint8_t,uint8_t);
 
 typedef void (*operation)();
 
@@ -29,6 +29,7 @@ uint8_t SUB(uint8_t,uint8_t);
 uint8_t SUBN(uint8_t,uint8_t);
 uint8_t SHR(uint8_t, uint8_t);
 uint8_t SHL(uint8_t, uint8_t);
+uint8_t NOP(uint8_t, uint8_t);
 uint8_t RND();
 void DRW(uint8_t,uint8_t,uint8_t);
 void SKP(uint8_t);
@@ -53,6 +54,30 @@ void opcode_0xD();
 void opcode_0xE();
 void opcode_0xF();
 //end
+
+//Operations
+operation operations[16] = {opcode_0x0, 
+			    opcode_0x1, 
+			    opcode_0x2, 
+			    opcode_0x3, 
+			    opcode_0x4, 
+			    opcode_0x5, 
+			    opcode_0x6, 
+			    opcode_0x7, 
+			    opcode_0x8, 
+			    opcode_0x9, 
+			    opcode_0xA, 
+			    opcode_0xB, 
+			    opcode_0xC, 
+			    opcode_0xD, 
+			    opcode_0xE, 
+			    opcode_0xF};
+// All ALU operations. 
+// Note the NOP operation represents no operation 
+// which means that the index of the that operation is unused.
+arithmetic_op arithmetic_ops[16] = {LD, OR, AND, XOR, ADD, SUB, SHR, SUBN, //7
+				    NOP, NOP, NOP, NOP, NOP, NOP, //D
+				    SHL, NOP};
 
 // debug flag 
 bool  DEBUG = true;
@@ -80,6 +105,9 @@ uint8_t SP = 0;
 
 // The Stack.
 uint16_t stack[0x10] = {0};
+
+//Keypad 16 keys
+uint8_t keypad[16] = {0};
 
 // The fonstet that is used by the CHIP8
 uint8_t fontset[80] = {
@@ -117,11 +145,40 @@ uint16_t get_opcode(){
 	return (memory[PC] << 8) + memory[PC + 1] ;
 }
 
+// Initialize CHIP by loading constants (fontset -> memory)
 void init_chip(){
 	srand((unsigned int) time(NULL));
 
 	//load fonts
 	memcpy(memory, fontset, sizeof(fontset));
+}
+
+// load the program to memory
+int load_rom(char* filename){
+	FILE* file = fopen(filename, "rb");
+	
+	if(file == NULL) return errno;
+	
+	struct stat status;
+	stat(filename, &status);
+	size_t fsize = status.st_size;
+	
+	size_t bytes_read = fread(memory + 0x200, 1, sizeof(memory) - 0x200, file);
+	
+	// check if the whole file is read
+	if(bytes_read != fsize) return -1;
+	
+	// release the file pointer
+	fclose(file);
+	return 0;
+}
+// emulate cycle (this could be considered the most important function)
+void execute_cycle(){
+	uint16_t OP = get_opcode();
+	uint8_t op_index = select_4_bit(OP, 3);
+	operations[op_index]();
+	if(dt > 0) dt--;
+	if(st > 0) st--;
 }
 
 void opcode_0x0(){
@@ -135,7 +192,6 @@ void opcode_0x0(){
 	default:
 		break;
 	}
-	PC += 2;
 }	
 void opcode_0x1(){
 	JP(OP & 0xFFF);
@@ -169,11 +225,13 @@ void opcode_0x6(){
 void opcode_0x7(){
 	uint8_t x = select_4_bit(OP, 2);
 	V[x] = ADD(V[x], OP & 0xFF);
-	PC += 2;
 }
 
 void opcode_0x8(){
-
+	uint8_t x = select_4_bit(OP, 2);
+	uint8_t y = select_4_bit(OP, 1);
+	uint8_t n = select_4_bit(OP, 0);
+	arithmetic_ops[n](x,y);
 }
 
 void opcode_0x9(){
@@ -184,8 +242,7 @@ void opcode_0x9(){
 }
 
 void opcode_0xA(){
-	I = LD(op & 0xFFF, 0);
-	PC += 2;
+	I = LD(OP & 0xFFF, 0);
 }
 
 void opcode_0xB(){
@@ -195,20 +252,17 @@ void opcode_0xB(){
 void opcode_0xC(){
 	uint8_t x = select_4_bit(OP, 2);
 	V[x] = OP & RND();
-	PC += 2;
 }
 void opcode_0xD(){
 	uint8_t x = select_4_bit(OP, 2);
-	uint8_t y = select_4_bit(OP, 3);
-	uint8_t n = select_4_bit(OP, 4);
+	uint8_t y = select_4_bit(OP, 1);
+	uint8_t n = select_4_bit(OP, 0);
     DRW(x,y,n);
-    PC += 2;
 }
 
 void opcode_0xE(){
-	x = select_4_bit(OP, 2);
-    switch (OP & 0xFF)
-	{
+	uint8_t x = select_4_bit(OP, 2);
+    	switch (OP & 0xFF){
 	case 0x9E:
 		SKP(x);
 		break;
@@ -221,7 +275,7 @@ void opcode_0xE(){
 	}
 }
 void opcode_0xF(){
-    x = select_4_bit(OP, 2); 
+    uint8_t x = select_4_bit(OP, 2); 
     switch (OP & 0xFF)
 	{
     case 0x07:
@@ -296,7 +350,7 @@ void CALL(uint16_t addr){
 void SE(uint8_t a, uint8_t b){
 	if (a == b) PC += 2;
 }
-void SE(uint8_t a, uint8_t b){
+void SNE(uint8_t a, uint8_t b){
 	if (a != b) PC += 2;
 }
 uint8_t LD(uint8_t a, uint8_t _){
@@ -328,13 +382,15 @@ uint8_t SUBN(uint8_t a, uint8_t b){
 	return b - a;
 }
 uint8_t SHR(uint8_t a, uint8_t _){
-	V[0xF] = a & 0x0001;
+	V[0xF] = a & 0x01;
 	return a >> 1;
 }
 uint8_t SHL(uint8_t a, uint8_t _){
-	V[0xF] = a & 0xA000;
+	V[0xF] = a & 0xA0;
 	return a << 1;
 }
+uint8_t NOP(uint8_t a, uint8_t b){}
+
 uint8_t RND(){
 	return (uint8_t)(rand()/256);
 }
@@ -348,7 +404,7 @@ void DRW(uint8_t x, uint8_t y, uint8_t n){
 		for(uint8_t column = 0; column < 8; column++){
 			// check if bit == 1 do some operation 
 			// else goto next iteration.
-			if(px & (0x80 >> column) != 0){
+			if((px & (0x80 >> column)) != 0){
 				if(display[V[x] + column + ((V[y] + row) * 64)] == 1) V[0xF] = 1;
 			    display[V[x] + column + ((V[y] + row) * 64)] ^= 1;
 			}
